@@ -18,15 +18,17 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stm32f1xx_it.h"
+#include "stm32f1xx_hal_tim.h"
+#include "stm32f1xx_hal_gpio.h"
 #include "i2c-lcd.h"
-#include "i2c.h"
-#include <stdio.h>
-#include "math.h"
-#include "string.h"
-#include "stdbool.h"
 
 /* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
+#include "stdlib.h"
+#include "stdio.h"
+#include "stdarg.h"
+#include "string.h"
+#include "math.h"
 
 /* USER CODE END Includes */
 
@@ -36,34 +38,6 @@
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c1;
-
-/* USER CODE BEGIN PV */
-
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-void MX_I2C1_Init(void);
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
 
 #define MPU6050_ADDR 0xD0
 
@@ -82,13 +56,47 @@ int16_t Accel_X_RAW = 0;
 int16_t Accel_Y_RAW = 0;
 int16_t Accel_Z_RAW = 0;
 
+int16_t Gyro_X_RAW = 0;
+int16_t Gyro_Y_RAW = 0;
+int16_t Gyro_Z_RAW = 0;
+
 float Ax, Ay, Az;
 
-
-int steps = 0;
-float vectorPre = 0;
+float vectorprevious;
 float vector;
-float vectorTotal;
+float totalvector;
+int Steps = 0;
+uint32_t Count = 0;
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+I2C_HandleTypeDef hi2c2;
+
+TIM_HandleTypeDef htim2;
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_I2C1_Init(void);
+static void MX_I2C2_Init(void);
+static void MX_TIM2_Init(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
 
 void MPU6050_Init (void)
 {
@@ -97,55 +105,30 @@ void MPU6050_Init (void)
 
 	// check device ID WHO_AM_I
 
-	HAL_I2C_Mem_Read (&hi2c1, MPU6050_ADDR,WHO_AM_I_REG,1, &check, 1, 1000);
+	HAL_I2C_Mem_Read (&hi2c2, MPU6050_ADDR,WHO_AM_I_REG,1, &check, 1, 1000);
 
 	if (check == 104)  // 0x68 will be returned by the sensor if everything goes well
 	{
 		// power management register 0X6B we should write all 0's to wake the sensor up
 		Data = 0;
-		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, PWR_MGMT_1_REG, 1,&Data, 1, 1000);
+		HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, PWR_MGMT_1_REG, 1,&Data, 1, 1000);
 
 		// Set DATA RATE of 1KHz by writing SMPLRT_DIV register
 		Data = 0x07;
-		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, SMPLRT_DIV_REG, 1, &Data, 1, 1000);
+		HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, SMPLRT_DIV_REG, 1, &Data, 1, 1000);
 
 		// Set accelerometer configuration in ACCEL_CONFIG Register
-		// XA_ST=0,YA_ST=0,ZA_ST=0, FS_SEL=0 -> ï¿½ 2g
+		// XA_ST=0,YA_ST=0,ZA_ST=0, FS_SEL=0 -> ± 2g
 		Data = 0x00;
-		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, ACCEL_CONFIG_REG, 1, &Data, 1, 1000);
+		HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, ACCEL_CONFIG_REG, 1, &Data, 1, 1000);
 
 		// Set Gyroscopic configuration in GYRO_CONFIG Register
-		// XG_ST=0,YG_ST=0,ZG_ST=0, FS_SEL=0 -> ï¿½ 250 ï¿½/s
+		// XG_ST=0,YG_ST=0,ZG_ST=0, FS_SEL=0 -> ± 250 °/s
 		Data = 0x00;
-		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, GYRO_CONFIG_REG, 1, &Data, 1, 1000);
+		HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, GYRO_CONFIG_REG, 1, &Data, 1, 1000);
 	}
 
 }
-
-
-void MPU6050_Read_Accel ()
-{
-	uint8_t Rec_Data[6];
-
-	// Read 6 BYTES of data starting from ACCEL_XOUT_H register
-
-	HAL_I2C_Mem_Read (&hi2c1, MPU6050_ADDR, ACCEL_XOUT_H_REG, 1, Rec_Data, 6, 1000);
-
-	Accel_X_RAW = (int16_t)(Rec_Data[0] << 8 | Rec_Data [1]);
-	Accel_Y_RAW = (int16_t)(Rec_Data[2] << 8 | Rec_Data [3]);
-	Accel_Z_RAW = (int16_t)(Rec_Data[4] << 8 | Rec_Data [5]);
-
-	/*** convert the RAW values into acceleration in 'g'
-	     we have to divide according to the Full scale value set in FS_SEL
-	     I have configured FS_SEL = 0. So I am dividing by 16384.0
-	     for more details check ACCEL_CONFIG Register              ****/
-
-	Ax = Accel_X_RAW;
-	Ay = Accel_Y_RAW;
-	Az = Accel_Z_RAW;
-}
-
-
 
 /**
   * @brief  The application entry point.
@@ -153,90 +136,98 @@ void MPU6050_Read_Accel ()
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
+	HAL_Init();
 
-  /* USER CODE END 1 */
-	char data[4];
-  /* MCU Configuration--------------------------------------------------------*/
+	SystemClock_Config();
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+	  MX_GPIO_Init();
+	  MX_I2C1_Init();
+	  MX_I2C2_Init();
+	  MX_TIM2_Init();
 
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_I2C1_Init();
-  /* USER CODE BEGIN 2 */
-	lcd_init();
-	
 	MPU6050_Init();
+	lcd_init();
+	lcd_clear();
+
+	char data[4];
+	uint8_t Rec_Data[6] = {0,0,0,0,0,0};
 	
-	lcd_send_string ("initialized");
-
-  HAL_Delay (1000);  // wait for 1 sec
-
-  lcd_clear ();
-
-  lcd_send_cmd (0x80|0x5A);
-  lcd_send_string ("MPU6050");
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-		uint8_t Rec_Data[6];
-	  HAL_I2C_Mem_Write(&hi2c1,0xD0, ACCEL_CONFIG_REG, 1, 0,0,1000);
+		HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, ACCEL_CONFIG_REG, 1, 0, 0, 1000);
+		HAL_I2C_Mem_Read (&hi2c2, MPU6050_ADDR, ACCEL_XOUT_H_REG, 1, Rec_Data, 6, 1000);
+		Accel_X_RAW = (int16_t)(Rec_Data[0] << 8 | Rec_Data [1]);
+		Accel_Y_RAW = (int16_t)(Rec_Data[2] << 8 | Rec_Data [3]);
+		Accel_Z_RAW = (int16_t)(Rec_Data[4] << 8 | Rec_Data [5]);
 
-	// Read 6 BYTES of data starting from ACCEL_XOUT_H register
-
-	HAL_I2C_Mem_Read (&hi2c1, MPU6050_ADDR, ACCEL_XOUT_H_REG, 1, Rec_Data, 6, 1000);
-
-	Accel_X_RAW = (int16_t)(Rec_Data[0] << 8 | Rec_Data [1]);
-	Accel_Y_RAW = (int16_t)(Rec_Data[2] << 8 | Rec_Data [3]);
-	Accel_Z_RAW = (int16_t)(Rec_Data[4] << 8 | Rec_Data [5]);
-
-	/*** convert the RAW values into acceleration in 'g'
-	     we have to divide according to the Full scale value set in FS_SEL
-	     I have configured FS_SEL = 0. So I am dividing by 16384.0
-	     for more details check ACCEL_CONFIG Register              ****/
-
-	
-	  vector = sqrt( (Accel_X_RAW * Accel_X_RAW) + (Accel_Y_RAW * Accel_Y_RAW) + (Accel_Z_RAW * Accel_Z_RAW) ); // Calculate the Space Vector length
-				vectorTotal = vector - vectorPre;				// Calculate the difference from the previous value
+		/*
+			De chuyen doi gia tri RAW --> gia toc voi don vi g.
+	  ==> phai chia theo gia tri Full scale: 16384
+		*/
+	  
+		Ax = Accel_X_RAW/16384.0;
+		Ay = Accel_Y_RAW/16384.0;
+		Az = Accel_Z_RAW/16384.0;
+		
+		if(0u == HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_4)) {
+			lcd_clear();																						// Clear display LCD
+			HAL_TIM_Base_Stop_IT(&htim2);															// Disable TIM2
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0);
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, 1);
+			Steps = 0;																							// Reset counter step
+			lcd_put_cur(0, 1);																			
+			lcd_send_string ("Steps: ");																								 																													
+			lcd_put_cur(1, 3);																												// Print string
+			sprintf(data, "%d", Steps);															// Convert Steps from int to char
+			lcd_send_string(data);
+		}
+		else {
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, 0);
+			if(0u == HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_3)) {
+				HAL_Delay(1);																						// Wait for some time to stabilize the system
+				if(0u == HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_3)) {															// Check pressed SS Pin Switch again
+				while(0u == HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_3));													// Wait to Unpressed SS Pin Switch
+				Count++;																						// Increase the counter by 1
+				}
+			}
+			if(Count % 2 !=0) {
+				HAL_TIM_Base_Start_IT(&htim2);
+				vector = sqrt((Ax * Ax) + (Ay * Ay) + (Az * Az)); // Calculate the Space Vector length
+				totalvector = vector - vectorprevious;								// Calculate the difference from the previous value
 				
-				if (vectorTotal > 2000){
-steps++;				}
-				
-		lcd_put_cur(0,3);								// Print string in column 2, row 1
-lcd_send_string("Steps:");		
-		lcd_put_cur(1,3);								// Print string in column 4, row 2
-		sprintf(data, "%d", steps);							// Convert Steps from int to char
-		lcd_send_string(data);								// Print Steps counter
-		vectorPre = vector; 							// Save previous Space Vector length value
-		HAL_Delay(500);
-	 
-    /* USER CODE BEGIN 3 */
+				if ((totalvector*100) > 3){
+					Steps++;																						// Increase the Steps value by 1
+				}
+			}
+			
+			else {
+				HAL_TIM_Base_Stop_IT(&htim2);
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0);
+				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, 1);
+			}
+		}
+		lcd_put_cur(0, 1);																			
+		lcd_send_string ("TA - ND");																							 																													
+		lcd_put_cur(1, 3);																			
+		lcd_send_string("Steps= ");																
+		sprintf(data, "%d", Steps);															
+		lcd_send_string(data);
+    vectorprevious = vector;
+		HAL_Delay(800);
   }
   /* USER CODE END 3 */
+}
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
 }
 
 /**
   * @brief System Clock Configuration
   * @retval None
   */
-void SystemClock_Config(void){
+void SystemClock_Config(void)
+{
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -271,19 +262,159 @@ void SystemClock_Config(void){
 }
 
 /**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 7199;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB3 PB4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
